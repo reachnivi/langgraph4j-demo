@@ -17,7 +17,7 @@ builds, tests and runs with no API key and no network.
 ## Quick start
 
 ```bash
-mvn test                                                          # 12 tests, fully offline
+mvn test                                                          # 18 tests, fully offline
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage01_hello.Main
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage02_routing.Main
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage03_llm.Main
@@ -54,21 +54,20 @@ LG4J_PROVIDER=ollama \
 
 | Stage | Package | What it adds |
 |---|---|---|
-| 1 ✅ | `stage01_hello` | `AgentState`, channels, nodes, edges, `invoke` — a straight line, no LLM |
-| 2 ✅ | `stage02_routing` | `addConditionalEdges` — the graph forks and re-converges |
-| 3 ✅ | `stage03_llm` | An LLM behind two nodes; pluggable provider; defensive output handling |
-| 4 | `stage04_reflection` | Cycles: draft → critique → revise, with `recursionLimit` |
-| 5 | `stage05_tools` | Tool calling, the agent↔tools loop, `MessagesState` |
-| 6 | `stage06_parallel` | Parallel nodes, `Channels.appender`, custom `Reducer` |
-| 7 | `stage07_memory` | `MemorySaver`, `threadId`, multi-turn memory |
-| 8 | `stage08_hitl` | Human-in-the-loop: `interruptsBefore`, `updateState`, `GraphInput.resume()` |
-| 9 | `stage09_streaming` | `stream()` over `NodeOutput`, watching nodes fire |
-| 10 | `stage10_subgraph` | Subgraphs and `Command` handoff |
-| 11 | `stage11_persistence` | `SQLiteSaver`, `getStateHistory`, time-travel replay |
+| 1 | `stage01_hello` | `AgentState`, channels, nodes, edges, `invoke` — a straight line, no LLM |
+| 2 | `stage02_routing` | `addConditionalEdges` — the graph forks and re-converges |
+| 3 | `stage03_llm` | An LLM behind two nodes; pluggable provider; defensive output handling |
+| 4 | `stage04_reflection` | **Cycles**: draft → critique → draft, with a counter *and* `recursionLimit` |
+| 5 | `stage05_tools` | **Tool calling**: the ReAct loop, and why the model never executes anything |
+| 6 | `stage06_parallel` | **Parallelism** and a custom `Reducer` — plus why `node_async` isn't async |
+| 7 | `stage07_memory` | **Checkpointing**: `MemorySaver` + `threadId`, and thread isolation |
+| 8 | `stage08_hitl` | **Human-in-the-loop**: `interruptBefore`, `updateState`, `GraphInput.resume()` |
+| 9 | `stage09_streaming` | **Streaming**: `stream()` emits a `NodeOutput` per node as it finishes |
+| 10 | `stage10_subgraph` | **Composition**: `addSubgraph` embeds a whole graph as one node |
+| 11 | `stage11_persistence` | **Durability**: `SQLiteSaver`, surviving restarts, and time-travel replay |
+| 12 | `stage12_observability` | **Langfuse tracing** over OpenTelemetry (see below) |
 
-Stages 4–11 are the roadmap; they aren't built yet.
-
-### What each built stage is trying to teach
+### What each stage is trying to teach
 
 **Stage 1 — state is a map, nodes are functions.** A node receives the state and returns a
 *partial* update — only the keys it wants to change. `TicketState.SCHEMA` decides how each key
@@ -86,15 +85,121 @@ changed. Note `sanitize()` — a real model replies "Billing." or "I think this 
 so its answer is normalised and falls back to `general` rather than throwing. Never let raw
 model output reach your routing logic.
 
+**Stage 4 — an edge may point backwards.** That single fact is all a cycle is. What it costs
+you is a termination argument: there are two brakes here, a revision counter you control and
+`recursionLimit` as the framework's backstop. If you are hitting the second one, the first is
+wrong.
+
+**Stage 5 — the model never executes anything.** It returns a *request* to call a tool. The
+`tools` node decides whether to honour it — note it refuses tool names it doesn't recognise.
+That gap is where authorisation, validation and audit logging belong.
+
+**Stage 6 — `node_async` is not async.** It adapts a synchronous function to the async
+signature and still runs it on the calling thread, so branches wired "in parallel" run one
+after another: measured at ~957ms for three 300ms analyzers. Returning a future that is
+already running on a pool brings the same graph to ~355ms. `Main` prints the timing so you
+can tell which one you have. Meanwhile the custom `Reducer` is what stops three concurrent
+writes to one key from silently discarding two of them.
+
+**Stage 7 — where vs. which.** `checkpointSaver` is set once at compile time and decides
+*where* state lives; `threadId` is set per call and decides *which* conversation continues.
+Forget the threadId and every caller shares one conversation.
+
+**Stage 8 — resume, don't re-invoke.** After an `interruptBefore` pause you continue with
+`invoke(GraphInput.resume(), config)`. Passing the original input again would start over.
+Interrupts require a checkpointer — the pause has to be stored somewhere.
+
+**Stage 9 — watch it run.** `stream()` hands you each node's output as it finishes. It is the
+best debugging tool in this repo: you see which node changed which field, in order, without
+adding a single print statement to a node.
+
+**Stage 10 — policy vs. procedure.** The parent decides *whether* to escalate; the subgraph
+knows *how*. The subgraph keeps its own START/END and stays independently runnable.
+
+**Stage 11 — swapping the saver changes nothing else.** `SQLiteSaver` for `MemorySaver` and
+the graph is untouched. One asymmetry to know: `SQLiteSaver` requires an explicit
+`stateSerializer` because it writes bytes, where `MemorySaver` just holds references — omit it
+and it fails at runtime.
+
+**A serialization gotcha from Stage 5 on.** langgraph4j checkpoints state with Java object
+streams, but langchain4j's `ChatMessage` types are not `Serializable`. Putting messages in
+state fails with `NotSerializableException` until you use `LC4jStateSerializer` from the
+`langgraph4j-langchain4j` module.
+
+## Observability with Langfuse (Stage 12)
+
+Langfuse has **no Java SDK — and does not need one.** It ingests plain OpenTelemetry on
+`${LANGFUSE_HOST}/api/public/otel` and maps the OTel GenAI conventions onto its own model:
+a root span becomes a trace, child spans nest under it, and any span carrying `gen_ai.*`
+attributes is rendered as a *generation* with its model, prompt, completion and token usage.
+
+So the integration is three small pieces, all in `obs/`:
+
+| File | Job |
+|---|---|
+| `obs/Langfuse.java` | Builds an OTLP/HTTP exporter pointed at Langfuse with basic-auth from your key pair, and registers it globally |
+| `obs/Tracing.java` | One span per graph node — reuses langgraph4j's own `OTELWrapCallTraceHook`, no custom hook needed |
+| `obs/LangfuseChatModelListener.java` | One span per LLM call, emitting the `gen_ai.*` attributes Langfuse looks for |
+| `obs/TracedChatModel.java` | Makes those listener callbacks fire for *any* model, including the offline stub |
+
+Stage 12's graph is Stage 3's graph. Diff them: the node bodies are identical, and the only
+tracing-related line is a single `Tracing.instrument(...)` call. Observability that requires
+editing every node is observability you will stop maintaining.
+
+### Running it
+
+```bash
+docker compose up -d            # Langfuse at http://localhost:3000
+# sign up locally, create a project, copy its two keys
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+mvn -q compile exec:java -Dexec.mainClass=com.example.lg4j.stage12_observability.Main
+```
+
+With no keys set, Stage 12 still runs and simply reports that tracing is off.
+
+| Variable | Default |
+|---|---|
+| `LANGFUSE_HOST` | `http://localhost:3000` (the bundled compose stack; use `https://cloud.langfuse.com` for hosted) |
+| `LANGFUSE_PUBLIC_KEY` | — required to export |
+| `LANGFUSE_SECRET_KEY` | — required to export |
+
+### Two traps worth knowing
+
+**Flush before you exit.** Spans go through a `BatchSpanProcessor`, which exports on a ~5s
+timer. A short program that finishes and exits loses its final batch — traces simply never
+appear. `Langfuse.install()` returns the SDK so you can `close()` it, which flushes
+synchronously. Do not "fix" this with a `Thread.sleep`; that is what failed here first.
+
+**Use the `gen_ai.*` names exactly.** Invent your own attribute names and the span still
+arrives, it just shows up as an anonymous span with no model and no token usage — a
+confusing way to discover the convention.
+
+### What was verified
+
+The exporter wiring was checked against a local mock collector: the request goes to
+`POST /api/public/otel/v1/traces` with `Authorization: Basic <base64(pk:sk)>`,
+`x-langfuse-ingestion-version: 4` and `Content-Type: application/x-protobuf`, carrying node
+spans (`classify`, `draft_reply`), `service.name=langgraph4j-demo`, and generation spans with
+`gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.prompt` and
+`gen_ai.completion`.
+
+`docker-compose.yml` passes `docker compose config`, but **the stack itself was never booted** —
+the machine this was built on had the Docker CLI but no daemon. Treat the compose file as a
+solid starting point rather than something proven end-to-end; if an image bump breaks it,
+compare against the compose file in the `langfuse/langfuse` repository.
+
 ## Layout
 
 ```
+docker-compose.yml           # self-hosted Langfuse for stage 12
 src/main/java/com/example/lg4j/
-  model/ModelFactory.java    # provider switch: stub | anthropic | ollama
-  model/StubChatModel.java   # deterministic offline ChatModel
-  stage01_hello/             # TicketState, TriageGraph, Main
+  model/                     # provider switch + offline stub model
+  obs/                       # Langfuse / OpenTelemetry wiring (stage 12)
+  stage01_hello/             # each stage: TicketState, TriageGraph, Main
   stage02_routing/
-  stage03_llm/
+  ...
+  stage12_observability/
 src/test/java/com/example/lg4j/
 ```
 
@@ -107,7 +212,9 @@ switch is orthogonal to the graph concepts.
 
 Pinned in `pom.xml`, and worth knowing because the ecosystem moves fast:
 
-- **langgraph4j `1.8.27`** — the latest *stable* release. `1.9.0` is beta-only.
+- **langgraph4j `1.8.27`** — pinned deliberately. `1.9.0` went stable on 2026-09-18; its
+  `StateGraph`/`CompiledGraph` signatures are identical for everything used here, so moving
+  up is a one-line change in `pom.xml` when you want it.
 - **langchain4j `1.19.0`** — the version langgraph4j 1.8.27 is built against.
 - The chat interface is `dev.langchain4j.model.chat.ChatModel`. The older
   `ChatLanguageModel` no longer exists.
