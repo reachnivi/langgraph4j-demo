@@ -5,9 +5,12 @@ import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.chat.listener.ChatModelRequestContext;
 import dev.langchain4j.model.chat.listener.ChatModelResponseContext;
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Context;
+
+import java.util.function.Supplier;
 
 /**
  * Turns every langchain4j model call into a Langfuse "generation".
@@ -28,11 +31,29 @@ public class LangfuseChatModelListener implements ChatModelListener {
 
     private static final String SPAN_KEY = "langfuse.span";
 
+    private final Supplier<OpenTelemetry> openTelemetry;
+
+    /** Uses whatever {@link Langfuse#install()} registered globally. */
+    public LangfuseChatModelListener() {
+        // Resolved per call, not captured here: the listener is often constructed before the SDK
+        // is registered, and capturing early would pin a no-op tracer that silently drops spans.
+        this(GlobalOpenTelemetry::get);
+    }
+
+    /** Takes an explicit SDK. Used by the tests, which must not touch global state. */
+    public LangfuseChatModelListener(OpenTelemetry openTelemetry) {
+        this(() -> openTelemetry);
+    }
+
+    private LangfuseChatModelListener(Supplier<OpenTelemetry> openTelemetry) {
+        this.openTelemetry = openTelemetry;
+    }
+
     @Override
     public void onRequest(ChatModelRequestContext context) {
         var request = context.chatRequest();
 
-        var span = GlobalOpenTelemetry.getTracer(Langfuse.SERVICE_NAME)
+        var span = openTelemetry.get().getTracer(Langfuse.SERVICE_NAME)
                 .spanBuilder("llm " + modelName(request.modelName()))
                 .setParent(Context.current())
                 .startSpan();

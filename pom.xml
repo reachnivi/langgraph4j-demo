@@ -125,6 +125,16 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
+
+    <!--
+      Lets the observability tests assert on spans in-process, with no collector and no network,
+      so the gen_ai.* attribute contract Langfuse depends on is checked by `mvn test`.
+    -->
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk-testing</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

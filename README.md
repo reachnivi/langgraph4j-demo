@@ -17,7 +17,7 @@ builds, tests and runs with no API key and no network.
 ## Quick start
 
 ```bash
-mvn test                                                          # 18 tests, fully offline
+mvn test                                                          # 29 tests, fully offline
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage01_hello.Main
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage02_routing.Main
 mvn -q exec:java -Dexec.mainClass=com.example.lg4j.stage03_llm.Main
@@ -140,7 +140,7 @@ So the integration is three small pieces, all in `obs/`:
 | `obs/Langfuse.java` | Builds an OTLP/HTTP exporter pointed at Langfuse with basic-auth from your key pair, and registers it globally |
 | `obs/Tracing.java` | One span per graph node — reuses langgraph4j's own `OTELWrapCallTraceHook`, no custom hook needed |
 | `obs/LangfuseChatModelListener.java` | One span per LLM call, emitting the `gen_ai.*` attributes Langfuse looks for |
-| `obs/TracedChatModel.java` | Makes those listener callbacks fire for *any* model, including the offline stub |
+| `obs/TracedChatModel.java` | Supplies `listeners()` so those callbacks fire for *any* model, including the offline stub |
 
 Stage 12's graph is Stage 3's graph. Diff them: the node bodies are identical, and the only
 tracing-related line is a single `Tracing.instrument(...)` call. Observability that requires
@@ -165,7 +165,15 @@ With no keys set, Stage 12 still runs and simply reports that tracing is off.
 | `LANGFUSE_PUBLIC_KEY` | — required to export |
 | `LANGFUSE_SECRET_KEY` | — required to export |
 
-### Two traps worth knowing
+### Three traps worth knowing
+
+**`ChatModel.chat()` already fires listeners.** The `default` implementation of
+`chat(ChatRequest)` calls `listeners()` and drives `onRequest`/`onResponse`/`onError` itself.
+Any model gets callbacks for free — it just has to *return* them from `listeners()`, which a
+hand-written model never does. Build a decorator that fires them manually as well, as this repo
+first did, and you get **two spans per call**, silently. `TracedChatModel` now only overrides
+`listeners()` and forwards to `delegate.doChat(...)`; the test suite pins this at one span.
+
 
 **Flush before you exit.** Spans go through a `BatchSpanProcessor`, which exports on a ~5s
 timer. A short program that finishes and exits loses its final batch — traces simply never
@@ -184,6 +192,11 @@ The exporter wiring was checked against a local mock collector: the request goes
 spans (`classify`, `draft_reply`), `service.name=langgraph4j-demo`, and generation spans with
 `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.prompt` and
 `gen_ai.completion`.
+
+That contract is also pinned by `ObservabilityTest`, which runs against an in-process
+`InMemorySpanExporter` — no collector, no network — and asserts the exact `gen_ai.*` attribute
+names, that one call produces exactly one span, and that a failing model marks its span
+`ERROR` rather than leaving a green trace that lies about what happened.
 
 `compose.yaml` is schema-valid, but **the stack itself was never booted** — this build machine
 has neither a container daemon nor podman installed. Treat it as a solid starting point rather
