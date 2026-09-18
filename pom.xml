@@ -49,6 +49,17 @@
       <artifactId>langgraph4j-core</artifactId>
     </dependency>
 
+    <!--
+      Needed from Stage 5 on. langgraph4j serializes state with Java object streams, but
+      langchain4j's ChatMessage types are NOT Serializable, so putting them in state fails
+      with NotSerializableException. This module supplies LC4jStateSerializer, which knows
+      how to write them.
+    -->
+    <dependency>
+      <groupId>org.bsc.langgraph4j</groupId>
+      <artifactId>langgraph4j-langchain4j</artifactId>
+    </dependency>
+
     <!-- Both providers ship by default so LG4J_PROVIDER can flip at runtime. -->
     <dependency>
       <groupId>dev.langchain4j</groupId>
