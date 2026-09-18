@@ -70,6 +70,12 @@
       <artifactId>langchain4j-ollama</artifactId>
     </dependency>
 
+    <!-- Stage 11: checkpoints that outlive the JVM. -->
+    <dependency>
+      <groupId>org.bsc.langgraph4j</groupId>
+      <artifactId>langgraph4j-sqlite-saver</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
