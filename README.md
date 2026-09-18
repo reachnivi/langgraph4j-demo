@@ -149,7 +149,8 @@ editing every node is observability you will stop maintaining.
 ### Running it
 
 ```bash
-docker compose up -d            # Langfuse at http://localhost:3000
+podman compose up -d            # Langfuse at http://localhost:3000
+                                # (or: podman-compose up -d)
 # sign up locally, create a project, copy its two keys
 export LANGFUSE_PUBLIC_KEY=pk-lf-...
 export LANGFUSE_SECRET_KEY=sk-lf-...
@@ -184,15 +185,29 @@ spans (`classify`, `draft_reply`), `service.name=langgraph4j-demo`, and generati
 `gen_ai.system`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.prompt` and
 `gen_ai.completion`.
 
-`docker-compose.yml` passes `docker compose config`, but **the stack itself was never booted** —
-the machine this was built on had the Docker CLI but no daemon. Treat the compose file as a
-solid starting point rather than something proven end-to-end; if an image bump breaks it,
-compare against the compose file in the `langfuse/langfuse` repository.
+`compose.yaml` is schema-valid, but **the stack itself was never booted** — this build machine
+has neither a container daemon nor podman installed. Treat it as a solid starting point rather
+than something proven end-to-end; if an image bump breaks it, compare against the compose file
+in the `langfuse/langfuse` repository.
+
+It is written podman-first, and the podman-specific choices are deliberate:
+
+| Choice | Why |
+|---|---|
+| Fully-qualified images (`docker.io/library/postgres:16-alpine`) | Podman enforces short-name resolution and **errors out in a non-interactive shell** instead of assuming Docker Hub. This is the change most likely to have bitten you. |
+| No `ulimits: nofile` on ClickHouse | Rootless podman usually cannot raise nofile above the user's hard limit, and the container refuses to start rather than degrading. Raise it on the host if you hit FD warnings. |
+| Named volumes only, no bind mounts | Avoids SELinux `:z`/`:Z` labelling, the other classic rootless-podman failure. |
+| All ports > 1024 | Rootless podman cannot bind privileged ports. |
+
+Two things to watch, since I could not run them: `depends_on: condition: service_healthy`
+needs a reasonably recent `podman-compose` (older ones ignore it, so the web container may
+start before Postgres is ready — just restart it), and the MinIO healthcheck shells out to
+`curl`, with `mc ready local` noted inline as the fallback if your image lacks it.
 
 ## Layout
 
 ```
-docker-compose.yml           # self-hosted Langfuse for stage 12
+compose.yaml                 # self-hosted Langfuse for stage 12 (podman or docker)
 src/main/java/com/example/lg4j/
   model/                     # provider switch + offline stub model
   obs/                       # Langfuse / OpenTelemetry wiring (stage 12)

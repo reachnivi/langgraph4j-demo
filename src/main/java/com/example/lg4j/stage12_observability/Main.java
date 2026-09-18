@@ -13,7 +13,7 @@ import java.util.Map;
  * <p>With no Langfuse keys set this still runs; it just tells you tracing is off. To see traces:
  *
  * <pre>
- *   docker compose up -d                 # Langfuse on http://localhost:3000
+ *   podman compose up -d                 # Langfuse on http://localhost:3000
  *   # sign in, create a project, copy the two keys
  *   export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-...
  *   mvn -q compile exec:java -Dexec.mainClass=com.example.lg4j.stage12_observability.Main

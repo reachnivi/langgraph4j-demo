@@ -33,14 +33,14 @@ import java.util.Base64;
  *
  * <table>
  *   <tr><th>Variable</th><th>Default</th></tr>
- *   <tr><td>{@code LANGFUSE_HOST}</td><td>{@code http://localhost:3000} (the bundled compose file)</td></tr>
+ *   <tr><td>{@code LANGFUSE_HOST}</td><td>{@code http://localhost:3000} (the bundled compose.yaml)</td></tr>
  *   <tr><td>{@code LANGFUSE_PUBLIC_KEY}</td><td>— required</td></tr>
  *   <tr><td>{@code LANGFUSE_SECRET_KEY}</td><td>— required</td></tr>
  * </table>
  */
 public final class Langfuse {
 
-    /** The bundled docker-compose stack. Use https://cloud.langfuse.com for the hosted version. */
+    /** The bundled compose stack (compose.yaml). Use https://cloud.langfuse.com for the hosted version. */
     public static final String DEFAULT_HOST = "http://localhost:3000";
 
     public static final String SERVICE_NAME = "langgraph4j-demo";
